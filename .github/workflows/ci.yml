@@ -37,7 +37,10 @@ jobs:
       # routes, or starts dropping a real finding, that is the regression.
       - name: the prefilter still drops the majority of routes
         run: |
-          node dist/cli.js scan test/fixtures --format json > s.json
+          # `scan` exits 1 because the fixtures contain real high-severity gaps —
+          # that is what they are for. Under `bash -e` the exit code would kill
+          # the step before a single assertion ran.
+          node dist/cli.js scan test/fixtures --format json > s.json || true
           node --input-type=module -e "
             import { readFileSync } from 'node:fs';
             const s = JSON.parse(readFileSync('s.json','utf8')).summary;
