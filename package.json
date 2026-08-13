@@ -1,0 +1,25 @@
+{
+  "name": "authsweep",
+  "version": "0.1.0",
+  "description": "Finds route handlers with no authorization check. Deterministic, zero tokens, with an optional diverse-lens verify stage.",
+  "keywords": ["security", "authorization", "sast", "express", "fastapi", "flask", "fastify", "audit", "sarif"],
+  "license": "MIT",
+  "author": "Erwin Lejeune",
+  "repository": { "type": "git", "url": "git+https://github.com/Unchained-Labs/authsweep.git" },
+  "homepage": "https://unchained-labs.github.io/authsweep/",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "bin": { "authsweep": "./dist/cli.js" },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "files": ["dist", "workflows", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": { "acorn": "^8.12.1" },
+  "devDependencies": { "@types/node": "^22.7.4", "typescript": "^5.6.2", "vitest": "^2.1.2" },
+  "packageManager": "pnpm@9.12.0"
+}

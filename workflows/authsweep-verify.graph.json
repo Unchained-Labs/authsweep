@@ -1,0 +1,111 @@
+{
+  "name": "authsweep-verify",
+  "description": "Verify 8 prefiltered auth findings with 3 diverse lenses",
+  "budget": {
+    "usd": 1
+  },
+  "nodes": [
+    {
+      "id": "verify",
+      "tier": "standard",
+      "phase": "Verify",
+      "outputSchema": "VERDICT",
+      "fanout": {
+        "over": "findings",
+        "width": 8,
+        "maxConcurrent": 8
+      },
+      "harness": {
+        "kind": "diverse-lens",
+        "lenses": [
+          "authz",
+          "input",
+          "session"
+        ],
+        "passIf": "majority"
+      }
+    },
+    {
+      "id": "report",
+      "tier": "deep",
+      "phase": "Report"
+    }
+  ],
+  "edges": [
+    {
+      "from": "verify",
+      "to": "report",
+      "channel": "confirmed",
+      "barrier": true,
+      "barrierReason": "the report ranks confirmed findings against each other, so it needs the whole set"
+    }
+  ],
+  "input": {
+    "findings": [
+      {
+        "id": "DELETE /admin/users/:id/roles",
+        "file": "test/fixtures/express/app.js",
+        "line": 18,
+        "severity": "high",
+        "evidence": "app.delete('/admin/users/:id/roles', (req, res) => dropRoles(req.params.id))",
+        "question": "Can a caller who is not the owner of this resource invoke DELETE /admin/users/:id/roles? Name the caller and the path they take."
+      },
+      {
+        "id": "POST /billing/charge",
+        "file": "test/fixtures/express/app.js",
+        "line": 19,
+        "severity": "high",
+        "evidence": "app.post('/billing/charge', (req, res) => charge(req.body))",
+        "question": "Can a caller who is not the owner of this resource invoke POST /billing/charge? Name the caller and the path they take."
+      },
+      {
+        "id": "GET /users/:id/export",
+        "file": "test/fixtures/express/app.js",
+        "line": 20,
+        "severity": "high",
+        "evidence": "app.get('/users/:id/export', (req, res) => dumpUser(req.params.id))",
+        "question": "Does GET /users/:id/export verify that the id belongs to the caller, or does it read whatever id it is given?"
+      },
+      {
+        "id": "GET /admin/keys",
+        "file": "test/fixtures/fastapi/flask_app.py",
+        "line": 16,
+        "severity": "high",
+        "evidence": "@app.route(\"/admin/keys\", methods=[\"GET\", \"DELETE\"])",
+        "question": "Is GET /admin/keys intended to be reachable without authentication?"
+      },
+      {
+        "id": "DELETE /admin/keys",
+        "file": "test/fixtures/fastapi/flask_app.py",
+        "line": 16,
+        "severity": "high",
+        "evidence": "@app.route(\"/admin/keys\", methods=[\"GET\", \"DELETE\"])",
+        "question": "Can a caller who is not the owner of this resource invoke DELETE /admin/keys? Name the caller and the path they take."
+      },
+      {
+        "id": "POST /billing/refund",
+        "file": "test/fixtures/fastapi/main.py",
+        "line": 19,
+        "severity": "high",
+        "evidence": "@app.post(\"/billing/refund\")",
+        "question": "Can a caller who is not the owner of this resource invoke POST /billing/refund? Name the caller and the path they take."
+      },
+      {
+        "id": "GET /users/{user_id}/secrets",
+        "file": "test/fixtures/fastapi/main.py",
+        "line": 23,
+        "severity": "high",
+        "evidence": "@app.get(\"/users/{user_id}/secrets\")",
+        "question": "Does GET /users/{user_id}/secrets verify that the id belongs to the caller, or does it read whatever id it is given?"
+      },
+      {
+        "id": "PATCH /settings",
+        "file": "test/fixtures/fastapi/main.py",
+        "line": 27,
+        "severity": "medium",
+        "evidence": "@app.patch(\"/settings\")",
+        "question": "Can a caller who is not the owner of this resource invoke PATCH /settings? Name the caller and the path they take."
+      }
+    ]
+  }
+}

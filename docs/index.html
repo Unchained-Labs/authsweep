@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>authsweep — route handlers with no authorization check</title>
+<meta name="description" content="Deterministic auth audit for Express, Fastify, FastAPI and Flask. Zero tokens, evidence on every finding, and an opt-in diverse-lens verify stage.">
+<meta property="og:title" content="authsweep — route handlers with no authorization check">
+<meta property="og:description" content="Deterministic auth audit for Express, Fastify, FastAPI and Flask. Zero tokens, evidence on every finding, and an opt-in diverse-lens verify stage.">
+<meta property="og:type" content="website">
+<link rel="icon" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/tokens.css">
+<link rel="stylesheet" href="assets/brand.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+</head>
+<body>
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="https://unchained-labs.github.io/" aria-label="Unchained Labs">
+      <img src="assets/lockup-horizontal.svg" alt="Unchained Labs" style="height:22px">
+    </a>
+    <nav>
+      <a href="#prefilter">Prefilter</a>
+      <a href="#severity">Severity</a>
+      <a href="#verify">Verify</a>
+      <a href="https://github.com/Unchained-Labs/authsweep">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<section class="hero">
+  <div class="wrap">
+    <p class="label">authsweep</p>
+    <h1>Half your auth audit should never have been a model call.</h1>
+    <p class="lead">Enumerating routes and asking whether each one references the auth middleware is grep with a parser attached — deterministic, instant, free. On a real codebase it removes more than half the work before any agent runs.</p>
+    <ul class="badges">
+      <li class="badge warn">alpha</li>
+      <li class="badge up">51 tests passing</li>
+      <li class="badge up">zero tokens</li>
+      <li class="badge ">SARIF</li>
+      <li class="badge ">MIT</li>
+    </ul>
+    <div class="btn-row">
+      <a class="btn primary" href="https://github.com/Unchained-Labs/authsweep#install">npx authsweep scan .</a>
+      <a class="btn " href="https://github.com/Unchained-Labs/authsweep">GitHub</a>
+    </div>
+  </div>
+</section>
+
+<section id="demo">
+  <div class="wrap">
+    <p class="label">The scan</p>
+    <h2>Deterministic, and it shows its work</h2>
+    <pre class="term"><code><span class="p">$</span> <span class="c">authsweep scan .</span>
+
+  <span class="dim">authsweep</span>  4 files · 25 routes · express, flask, fastapi
+
+  <span class="dim">prefilter</span>  16 of 25 routes dropped before any agent ran
+             <span class="dim">64% of the fan-out, for zero tokens</span>
+
+  <span class="er">✗</span> DELETE /admin/users/:id/roles  <span class="dim">src/routes/admin.js:18</span>
+     <span class="dim">app.delete(&#x27;/admin/users/:id/roles&#x27;, (req, res) =&gt; dropRoles(req.params.id))</span>
+     <span class="dim">no authorization check found on or above this handler · DELETE changes state ·</span>
+     <span class="dim">administrative surface · operates on user records · takes an id or wildcard</span>
+
+  <span class="er">✗</span> POST /billing/charge  <span class="dim">src/routes/billing.js:19</span>
+     <span class="dim">app.post(&#x27;/billing/charge&#x27;, (req, res) =&gt; charge(req.body))</span>
+     <span class="dim">no authorization check found on or above this handler · POST changes state · touches money</span>
+
+  <span class="er">7 high</span> <span class="dim">·</span> <span class="wa">1 medium</span> <span class="dim">·</span> <span class="ac">1 low</span></code></pre>
+  </div>
+</section>
+
+<section id="prefilter">
+  <div class="wrap">
+    <p class="label">The prefilter</p>
+    <h2>The free half, done properly</h2>
+    <p class="narrow">The reference architecture calls this out as the step people skip: you pay full price to have a model scan files that were obviously fine. authsweep does the deterministic half first and hands you a much shorter list.</p>
+    <ul class="clean">
+      <li>References a guard on the handler, its middleware chain, or <strong>at router level</strong> — <code>app.use(requireAuth)</code> covers everything below it, and a FastAPI <code>APIRouter(dependencies=[...])</code> covers its whole router.</li>
+      <li>Conventionally public — <code>/health</code>, <code>/metrics</code>, <code>/auth/login</code>, <code>/.well-known/*</code>.</li>
+      <li>Marked public in a comment or decorator — <code>// public</code>, <code>@public</code>, <code>no-auth</code>.</li>
+      <li>A stub that returns <code>501</code> or raises <code>NotImplementedError</code>.</li>
+    </ul>
+    <div class="note">
+      <p><strong>Every prefilter decision is recorded and auditable.</strong> <code>--format json</code> lists the dropped routes with the reason each one was dropped. A prefilter you cannot inspect is a prefilter you cannot trust — and one that is too aggressive is worse than no prefilter at all, which is why the fixtures test each drop reason explicitly.</p>
+    </div>
+    <h3>A path is not a guard</h3>
+    <p class="narrow">An early version read <code>app.post(&#x27;/auth/login&#x27;, handler)</code> as guarded, because the word <em>auth</em> in the <strong>path</strong> matched the guard pattern. Every <code>/auth/*</code> route in a codebase would have been silently treated as protected. Path literals are now stripped before guard detection, and there is a test for it.</p>
+  </div>
+</section>
+
+<section id="severity">
+  <div class="wrap">
+    <p class="label">Severity</p>
+    <h2>Not every missing check is the same event</h2>
+    <p class="narrow">A missing check on <code>DELETE /admin/users/:id/tokens</code> and a missing check on <code>GET /search</code> are different problems. A scanner that reports them at the same level teaches you to ignore both.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>Factor</th>
+          <th>Weight</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td>Mutating verb — POST / PUT / PATCH / DELETE</td>
+            <td class="num">+2</td>
+          </tr>
+          <tr>
+            <td><code>admin</code>, <code>internal</code>, <code>private</code>, <code>debug</code></td>
+            <td class="num">+3</td>
+          </tr>
+          <tr>
+            <td>Money — <code>billing</code>, <code>charge</code>, <code>refund</code>, <code>payout</code></td>
+            <td class="num">+3</td>
+          </tr>
+          <tr>
+            <td>Credentials — <code>token</code>, <code>secret</code>, <code>key</code>, <code>password</code></td>
+            <td class="num">+3</td>
+          </tr>
+          <tr>
+            <td>Authorization state — <code>role</code>, <code>permission</code>, <code>scope</code>, <code>grant</code></td>
+            <td class="num">+3</td>
+          </tr>
+          <tr>
+            <td>User records — <code>user</code>, <code>account</code>, <code>tenant</code>, <code>member</code></td>
+            <td class="num">+2</td>
+          </tr>
+          <tr>
+            <td>Bulk egress — <code>export</code>, <code>download</code>, <code>dump</code>, <code>backup</code></td>
+            <td class="num">+2</td>
+          </tr>
+          <tr>
+            <td>Takes an id or wildcard</td>
+            <td class="num">+1</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="narrow"><code>high</code> at 4+, <code>medium</code> at 2–3, <code>low</code> below. <strong>Every clause that contributed appears on the finding</strong>, so you can disagree with a score and see exactly why it scored.</p>
+    <div class="note">
+      <p><strong>Evidence or nothing.</strong> Every finding carries the verbatim source line it came from, and the SARIF output carries the snippet, so the GitHub Security tab shows the code rather than a description of it. A finding without a quotable span is a guess.</p>
+    </div>
+  </div>
+</section>
+
+<section id="verify">
+  <div class="wrap">
+    <p class="label">Verify</p>
+    <h2>The paid stage is opt-in</h2>
+    <p class="narrow">The scan is free. Verification costs money — so authsweep hands you the graph instead of quietly spawning <code>3 × findings</code> agents on your behalf.</p>
+    <pre class="term"><code><span class="p">$</span> <span class="c">authsweep verify-spec . &gt; verify.graph.json</span>
+<span class="p">$</span> <span class="c">graphlint check verify.graph.json</span>
+<span class="ok">✓</span> 1 file clean
+<span class="p">$</span> <span class="c">preflight estimate verify.graph.json</span>
+  <span class="dim">agents</span>  25   <span class="dim">cost</span>  $0.359   <span class="dim">budget</span> $1.00 <span class="ok">✓ under</span></code></pre>
+    <p class="narrow">The emitted spec is tiered, schema-bound, budgeted, uses three <strong>distinct</strong> lenses, and carries a <code>barrierReason</code> on its one barrier. It passes graphlint with no findings — asserted in CI, because a tool that emits a spec its own org&#x27;s linter rejects is not a family, it is three unrelated repos. Low-severity findings are excluded from the paid stage.</p>
+  </div>
+</section>
+
+<section id="limits">
+  <div class="wrap">
+    <p class="label">Limits</p>
+    <h2>What it does not do</h2>
+    <div class="note warn">
+      <p><strong>It is not a taint analyser.</strong> It answers <em>is there an auth check here</em>, not <em>is the check correct</em>. A route with <code>requireAuth</code> that then reads <code>req.params.id</code> with no ownership check is invisible to it — that is what the verify lenses are for.</p>
+      <p><strong>It will miss unusual architectures.</strong> Auth enforced in a gateway, a service mesh, a decorator factory or generated code reads as missing. Mark those routes public.</p>
+      <p><strong>A file it cannot parse is reported, never assumed clean.</strong> Unparseable files are listed in the output and the JSON summary — a file we cannot read is not a file without findings.</p>
+      <p><strong>It does not scan other people&#x27;s repositories for you.</strong> If you want to do that, the responsible-disclosure decisions are yours to make.</p>
+    </div>
+  </div>
+</section>
+
+<section id="family">
+  <div class="wrap">
+    <p class="label">The family</p>
+    <h2>One layer of a set</h2>
+    <div class="grid three">
+      <a class="card" href="https://github.com/Unchained-Labs/graphlint">
+        <h3>graphlint</h3>
+        <p>Lints the verify graph this emits — and every other agent workflow spec.</p>
+      </a>
+      <a class="card" href="https://github.com/Unchained-Labs/preflight">
+        <h3>preflight</h3>
+        <p>Prices the verify stage before you run it.</p>
+      </a>
+      <a class="card" href="https://github.com/Unchained-Labs/decorrelate">
+        <h3>decorrelate</h3>
+        <p>Measures whether the three lenses were actually independent.</p>
+      </a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>authsweep · Unchained Labs</span>
+    <nav>
+      <a href="https://unchained-labs.github.io/">Org</a>
+      <a href="https://github.com/Unchained-Labs/authsweep">Source</a>
+      <a href="https://unchained-labs.github.io/branding/">Brand</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>

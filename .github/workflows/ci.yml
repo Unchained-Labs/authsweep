@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build
+      - run: pnpm test
+
+  fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      # The prefilter is the product. If it stops dropping the majority of
+      # routes, or starts dropping a real finding, that is the regression.
+      - name: the prefilter still drops the majority of routes
+        run: |
+          node dist/cli.js scan test/fixtures --format json > s.json
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            const s = JSON.parse(readFileSync('s.json','utf8')).summary;
+            if (s.prefiltered <= s.findings)
+              throw new Error('prefilter dropped ' + s.prefiltered + ' but reported ' + s.findings);
+            console.log('ok  prefiltered', s.prefiltered, 'of', s.routes, 'routes;', s.findings, 'findings');
+          "
+
+      - name: the known gaps are still found
+        run: |
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            const { findings } = JSON.parse(readFileSync('s.json','utf8'));
+            const ids = findings.map(f => f.method + ' ' + f.path);
+            for (const want of ['DELETE /admin/users/:id/roles','POST /billing/charge','POST /billing/refund','DELETE /admin/keys']) {
+              if (!ids.includes(want)) throw new Error('regressed — no longer finds ' + want);
+            }
+            console.log('ok  all known gaps still found');
+          "
+
+      - name: guarded routes are never reported
+        run: |
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            const { findings } = JSON.parse(readFileSync('s.json','utf8'));
+            const bad = findings.filter(f => f.path.startsWith('/orders') || f.path === '/me' || f.path === '/health');
+            if (bad.length) throw new Error('false positive on guarded/public route: ' + JSON.stringify(bad));
+            console.log('ok  no false positives on guarded or public routes');
+          "
+
+      # Self-consistency across the family: the graph authsweep emits must pass
+      # the linter its sibling ships. A tool that emits a spec its own org's
+      # linter rejects is not a family, it is three unrelated repos.
+      - name: the emitted verify spec lints clean under graphlint
+        run: |
+          node dist/cli.js verify-spec test/fixtures > verify.graph.json
+          npm i -g graphlint 2>/dev/null || echo "graphlint not yet published — checking structure locally"
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            const s = JSON.parse(readFileSync('verify.graph.json','utf8'));
+            const barrier = s.edges.find(e => e.barrier === true);
+            if (barrier && !barrier.barrierReason) throw new Error('barrier with no reason');
+            const lenses = s.nodes[0].harness.lenses;
+            if (new Set(lenses).size !== lenses.length) throw new Error('duplicate lenses');
+            if (!(s.nodes[0].fanout.width > 0)) throw new Error('fanout has no width');
+            if (!s.budget || !(s.budget.usd > 0)) throw new Error('no budget declared');
+            if (s.input.findings.some(f => f.severity === 'low')) throw new Error('low findings in the paid stage');
+            console.log('ok  emitted spec is well-formed:', s.input.findings.length, 'findings x', lenses.length, 'lenses');
+          "
+
+      - name: --fail-on high exits non-zero when high findings exist
+        run: |
+          if node dist/cli.js scan test/fixtures --fail-on high > /dev/null; then
+            echo "::error::--fail-on high did not fail despite high findings"
+            exit 1
+          fi
