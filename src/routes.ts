@@ -51,8 +51,13 @@ const GUARD_PATTERNS = [
   /\blogin_?required\b/i,
   /\bauthenticated_?only\b/i,
   /\bwith_?auth\b/i,
-  /\bDepends\s*\(/,
-  /\bSecurity\s*\(/,
+  // FastAPI's Depends()/Security() are general dependency injection, NOT proof of
+  // an auth check. `Depends(get_service)` is a service locator. Treating any
+  // Depends() as a guard made authsweep report a false clean on a real FastAPI
+  // service whose paid endpoints were wide open — the exact failure mode this
+  // tool exists to prevent. Only count it when the dependency is named like an
+  // auth check.
+  /\b(?:Depends|Security)\s*\(\s*[\w.]*(?:auth|user|admin|token|jwt|session|permission|scope|role|login|identity|principal|api_?key|bearer|credential|verify|require|guard|acl|rbac|tenant|owner)[\w.]*\s*[,)]/i,
   /@roles?\b/i,
   /\bcan(Access|Read|Write|Edit|Delete)\b/i,
   /\bacl\b/i,

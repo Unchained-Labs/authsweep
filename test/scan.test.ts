@@ -113,6 +113,8 @@ describe("findings and severity", () => {
         "PATCH /settings",
         "POST /billing/charge",
         "POST /billing/refund",
+        // from di_not_auth.py — Depends(get_service) is not a guard
+        "POST /v1/stt/transcribe",
       ].sort(),
     );
   });
@@ -176,6 +178,42 @@ describe("framework support", () => {
   it("reads a Depends() guard in a FastAPI signature", () => {
     expect(prefilteredFor("GET", "/me")).toBeDefined();
     expect(prefilteredFor("DELETE", "/admin/tenants/{tenant_id}")!.reason).toMatch(/guarded by/);
+  });
+
+  it("does not treat plain FastAPI dependency injection as an auth guard", () => {
+    // Regression: `Depends(get_service)` is a service locator. Counting it as a
+    // guard produced a false clean on a real service — the worst failure mode
+    // this tool has, because silence reads as safety.
+    const routes = extractPy(
+      "di.py",
+      `from fastapi import Depends, FastAPI
+
+@app.post("/v1/stt/transcribe")
+async def transcribe(audio_service: AudioService = Depends(get_service)):
+    return 1
+`,
+    );
+    expect(routes[0]!.guards).toEqual([]);
+    expect(score(routes[0]!)).not.toBeNull();
+  });
+
+  it("still recognises an auth-named Depends as a guard", () => {
+    for (const dep of ["current_user", "require_admin", "verify_token", "get_current_user", "auth.principal"]) {
+      const routes = extractPy(
+        "a.py",
+        `@app.post("/x")\nasync def h(user = Depends(${dep})):\n    return 1\n`,
+      );
+      expect(routes[0]!.guards.length, dep).toBeGreaterThan(0);
+      expect(score(routes[0]!), dep).toBeNull();
+    }
+  });
+
+  it("finds the unguarded route in the DI fixture and clears the guarded one", () => {
+    const r = scan([join(FIXTURES, "fastapi", "di_not_auth.py")]);
+    const ids = r.findings.map((f) => `${f.method} ${f.path}`);
+    expect(ids).toContain("POST /v1/stt/transcribe");
+    expect(ids).not.toContain("POST /v1/tts/synthesize");
+    expect(ids).not.toContain("GET /healthz");
   });
 
   it("parses the fastify object form", () => {

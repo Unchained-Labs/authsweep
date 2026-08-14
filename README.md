@@ -150,6 +150,8 @@ is asserted in CI. Low-severity findings are excluded from the paid stage.
 - **It will miss unusual architectures.** Auth enforced in a gateway, a service
   mesh, a decorator factory, or generated code will read as missing. Mark those
   routes public or exclude the path.
+- **It does not read Rust.** Express, Fastify and Koa (JS/TS) plus FastAPI and
+  Flask (Python). An axum or actix service is invisible to it today.
 - **It will produce false positives.** That is the trade for zero tokens and no
   network. Read the evidence line.
 - **A file it cannot parse is reported, never assumed clean.** Unparseable files
@@ -165,9 +167,16 @@ node dist/cli.js scan test/fixtures --verbose
 ```
 
 The fixtures include the cases that must be prefiltered — a router-level
-`app.use` guard, a `Depends()` signature, a Flask `methods=` list, a stub handler,
-a `// public` comment — because a prefilter that is too aggressive is worse than
-no prefilter.
+`app.use` guard, an auth-named `Depends()` signature, a Flask `methods=` list, a
+stub handler, a `// public` comment — because a prefilter that is too aggressive
+is worse than no prefilter.
+
+`di_not_auth.py` is the fixture that matters most. FastAPI's `Depends()` is
+general dependency injection, and an earlier version of this tool counted *any*
+`Depends()` as an auth check. Run against a real service, it reported "every route
+has an authorization check" while two paid endpoints were wide open — a false
+clean, which is the worst thing this tool can do, because silence reads as safety.
+`Depends()` now only counts when the dependency is named like an auth check.
 
 ## Licence
 
