@@ -1,13 +1,17 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { json, sarif, terminal, workflowSpec } from "../src/report.js";
-import { extractJs, extractPy, hasGuard, isConventionallyPublic, markedPublic } from "../src/routes.js";
+import { extractJs, extractPy, extractRs, hasGuard, isConventionallyPublic, markedPublic } from "../src/routes.js";
 import { scan, score } from "../src/scan.js";
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
-const result = scan([FIXTURES]);
+// Scoped to the JS/TS and Python corpus on purpose. The counts asserted below —
+// and quoted in the README — describe *that* corpus, so folding the Rust
+// fixtures in would silently redefine them. Rust has its own block at the end.
+const result = scan([join(FIXTURES, "express"), join(FIXTURES, "fastapi")]);
 
 const findingFor = (method: string, path: string) =>
   result.findings.find((f) => f.method === method && f.path === path);
@@ -53,6 +57,20 @@ describe("guard detection", () => {
       expect(isConventionallyPublic(p), p).toBe(true);
     }
     for (const p of ["/users", "/admin/keys", "/billing/charge", "/settings"]) {
+      expect(isConventionallyPublic(p), p).toBe(false);
+    }
+  });
+
+  it("recognises an observability path mounted under a prefix", () => {
+    // Once a front-end resolves `.mount("/api/v1", …)` the path is no longer
+    // `/ping`, and a head-anchored pattern would report a health check purely
+    // because the router was read more accurately.
+    for (const p of ["/api/v1/ping", "/internal/healthz", "/v2/metrics", "/x/version"]) {
+      expect(isConventionallyPublic(p), p).toBe(true);
+    }
+    // But not a business endpoint that happens to end in a state word: this one
+    // leaks an order, and prefiltering it would be a false clean.
+    for (const p of ["/orders/{id}/status", "/v1/users/{id}/docs", "/admin/login-attempts"]) {
       expect(isConventionallyPublic(p), p).toBe(false);
     }
   });
@@ -380,5 +398,180 @@ describe("output formats", () => {
       expect(f.evidence.length).toBeGreaterThan(0);
       expect(f.question.length).toBeGreaterThan(20);
     }
+  });
+});
+
+// --- Rust --------------------------------------------------------------------
+// authsweep reported a green tick on a Rust control plane because it could not
+// read one, which is a false clean by omission. These are the tests for the
+// front-end that fixed it, written against the shapes a real axum service uses
+// rather than the ones that would be convenient to parse.
+
+const RUST = join(FIXTURES, "rust");
+const rust = scan([RUST]);
+const rustRoute = (method: string, path: string) =>
+  rust.routes.find((r) => r.method === method && r.path === path);
+
+describe("rust: axum", () => {
+  const routes = extractRs("axum_app.rs", readFileSync(join(RUST, "axum_app.rs"), "utf8"));
+  const at = (method: string, path: string) =>
+    routes.find((r) => r.method === method && r.path === path);
+
+  it("detects the framework", () => {
+    expect(routes.every((r) => r.framework === "axum")).toBe(true);
+  });
+
+  it("reads a chained method router as two separate exposures", () => {
+    // `.route("/v1/projects", post(create_project).get(list_projects))` is two
+    // endpoints, and collapsing it to one hides whichever is worse.
+    expect(at("POST", "/v1/projects")).toBeDefined();
+    expect(at("GET", "/v1/projects")).toBeDefined();
+  });
+
+  it("reads a route rustfmt wrapped across lines", () => {
+    expect(at("POST", "/v1/workspaces/{id}/command")).toBeDefined();
+  });
+
+  it("reads a fully qualified method helper", () => {
+    expect(at("PATCH", "/v1/queue/{id}")).toBeDefined();
+    expect(at("DELETE", "/admin/users/{id}")).toBeDefined();
+  });
+
+  it("reads a raw-string path without being confused by its braces", () => {
+    // `r#"/v1/templates/{name}"#` — a brace-counting scanner that does not know
+    // about string literals loses the rest of the file here.
+    expect(at("GET", "/v1/templates/{name}")).toBeDefined();
+  });
+
+  it("applies a nest() prefix to the router the nested function builds", () => {
+    expect(at("DELETE", "/admin/users/{id}")).toBeDefined();
+    expect(at("POST", "/admin/flags")).toBeDefined();
+    // and not the unprefixed form
+    expect(at("POST", "/flags")).toBeUndefined();
+  });
+
+  it("treats route_layer inside the nested builder as covering only that router", () => {
+    expect(at("DELETE", "/admin/users/{id}")!.coveredByGlobal).toBe(true);
+    expect(at("POST", "/v1/projects")!.coveredByGlobal).toBe(false);
+  });
+
+  it("reads an auth extractor in the handler signature as a guard", () => {
+    expect(at("GET", "/v1/billing/invoices")!.guards.length).toBeGreaterThan(0);
+    // The sibling on the same router has no extractor and must stay reported.
+    expect(at("POST", "/v1/billing/charge")!.guards).toEqual([]);
+    expect(at("POST", "/v1/billing/charge")!.coveredByGlobal).toBe(false);
+  });
+
+  it("does not mistake TraceLayer or CorsLayer for an authorization check", () => {
+    // The whole file is under `.layer(TraceLayer).layer(cors_layer())`. Reading
+    // either as a guard marks every route covered and the scan goes silent.
+    const covered = routes.filter((r) => r.coveredByGlobal).map((r) => r.path);
+    expect(covered.sort()).toEqual(["/admin/flags", "/admin/users/{id}"]);
+  });
+
+  it("treats a todo!() handler as a stub", () => {
+    expect(at("GET", "/v1/legacy")!.looksLikeStub).toBe(true);
+  });
+});
+
+describe("rust: a PascalCase type that only starts like auth is not a guard", () => {
+  // The Rust twin of the FastAPI `Depends(get_service)` bug. `Author`,
+  // `AuthorMeta` and `authored` all open with the four letters that matter, and
+  // a lazy prefix in front of `Auth` matches every one of them. If this test
+  // goes green while any of these routes is prefiltered, the tool is back to
+  // reporting a clean bill of health over open endpoints.
+  const routes = extractRs("author_not_auth.rs", readFileSync(join(RUST, "author_not_auth.rs"), "utf8"));
+
+  it("finds all three routes and guards none of them", () => {
+    expect(routes).toHaveLength(3);
+    for (const r of routes) {
+      expect(r.guards, `${r.method} ${r.path}`).toEqual([]);
+      expect(r.coveredByGlobal, `${r.method} ${r.path}`).toBe(false);
+    }
+  });
+
+  it("reports the payout endpoint rather than going quiet", () => {
+    expect(rustRoute("POST", "/v1/authors/{id}/payouts")).toBeDefined();
+    const f = rust.findings.find((x) => x.path === "/v1/authors/{id}/payouts");
+    expect(f).toBeDefined();
+    expect(f!.reasons.join(" ")).toMatch(/touches money/);
+  });
+});
+
+describe("rust: actix-web", () => {
+  const routes = extractRs("actix_macros.rs", readFileSync(join(RUST, "actix_macros.rs"), "utf8"));
+  const at = (method: string, path: string) =>
+    routes.find((r) => r.method === method && r.path === path);
+
+  it("reads attribute-macro routes, which have no .route() call at all", () => {
+    expect(at("POST", "/uploads")).toBeDefined();
+    expect(at("GET", "/health")).toBeDefined();
+  });
+
+  it("applies a web::scope prefix to a handler registered into it", () => {
+    // The path is on the attribute at the top of the file; the prefix is on a
+    // scope hundreds of lines away.
+    expect(at("DELETE", "/admin/keys/{id}")).toBeDefined();
+    expect(at("GET", "/v1/secrets/{id}")).toBeDefined();
+  });
+
+  it("scopes a .wrap() guard to its own scope and not to its siblings", () => {
+    // `web::scope("/admin").wrap(auth)` chains *after* the call's arguments, so
+    // attributing the wrap to the enclosing function would mark every sibling
+    // route covered — a false clean over `/v1/secrets/{id}`.
+    expect(at("DELETE", "/admin/keys/{id}")!.coveredByGlobal).toBe(true);
+    expect(at("GET", "/v1/secrets/{id}")!.coveredByGlobal).toBe(false);
+    expect(at("POST", "/v1/accounts/{id}/close")!.coveredByGlobal).toBe(false);
+  });
+
+  it("reads actix's web::get().to(handler) form", () => {
+    expect(at("GET", "/v1/ping")).toBeDefined();
+    expect(at("POST", "/v1/accounts/{id}/close")).toBeDefined();
+  });
+});
+
+describe("rust: rocket", () => {
+  const routes = extractRs("rocket_mount.rs", readFileSync(join(RUST, "rocket_mount.rs"), "utf8"));
+  const at = (method: string, path: string) =>
+    routes.find((r) => r.method === method && r.path === path);
+
+  it("applies the mount() prefix to each handler in routes![]", () => {
+    expect(at("GET", "/api/v1/jobs/<id>")).toBeDefined();
+    expect(at("POST", "/api/v1/jobs/<id>/cancel")).toBeDefined();
+    expect(at("DELETE", "/internal/tenants/<id>")).toBeDefined();
+  });
+
+  it("reads a request guard in the signature as a guard", () => {
+    expect(at("DELETE", "/internal/tenants/<id>")!.guards.length).toBeGreaterThan(0);
+    expect(at("GET", "/api/v1/jobs/<id>")!.guards).toEqual([]);
+  });
+
+  it("still prefilters a conventionally public path under a mount prefix", () => {
+    expect(at("GET", "/api/v1/ping")).toBeDefined();
+    expect(score(at("GET", "/api/v1/ping")!)).toBeNull();
+  });
+});
+
+describe("rust: the scan as a whole", () => {
+  it("does not report examinedNothing on a Rust codebase any more", () => {
+    expect(rust.examinedNothing).toBe(false);
+    expect(rust.routes.length).toBeGreaterThan(20);
+    expect(rust.frameworks.sort()).toEqual(["actix", "axum", "rocket"]);
+  });
+
+  it("ranks an unauthenticated command endpoint above plain mutation", () => {
+    // This is why the severity table grew an execution row. Rating
+    // `POST /workspaces/{id}/command` level with `POST /projects` is the
+    // "teaches you to ignore both" failure the module warns about.
+    const exec = rust.findings.find((f) => f.path === "/v1/workspaces/{id}/command");
+    const plain = rust.findings.find((f) => f.path === "/v1/projects" && f.method === "POST");
+    expect(exec!.severity).toBe("high");
+    expect(exec!.reasons.join(" ")).toMatch(/executes code or shell commands/);
+    expect(plain!.severity).toBe("medium");
+  });
+
+  it("flags a path-addressed file read", () => {
+    const f = rust.findings.find((x) => x.path === "/v1/workspaces/{id}/file");
+    expect(f!.reasons.join(" ")).toMatch(/reads or writes files by path/);
   });
 });

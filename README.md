@@ -8,7 +8,7 @@
 
 <div align="center">
   <img src="docs/assets/demo.gif" width="760" alt="authsweep terminal demo">
-  <br><sub>16 of 25 routes prefiltered before any agent ran. <a href="https://unchained-labs.github.io/authsweep/">Full docs →</a></sub>
+  <br><sub>18 of 28 routes prefiltered before any agent ran. <a href="https://unchained-labs.github.io/authsweep/">Full docs →</a></sub>
 </div>
 
 ---
@@ -20,9 +20,9 @@ every finding before acting on it.
 ```
 $ authsweep scan .
 
-  authsweep  4 files · 25 routes · express, flask, fastapi
+  authsweep  5 files · 28 routes · express, fastapi, flask
 
-  prefilter  16 of 25 routes dropped before any agent ran
+  prefilter  18 of 28 routes dropped before any agent ran
              64% of the fan-out, for zero tokens
 
   ✗ DELETE /admin/users/:id/roles  src/routes/admin.js:18
@@ -114,9 +114,20 @@ authsweep verify-spec [paths...]  # emit the verify stage as a workflow spec
 | :--- | :--- |
 | JS / TS | Express, Fastify (both call and object form), Koa |
 | Python | FastAPI (including `Depends` and router-level dependencies), Flask (including `methods=`) |
+| Rust | axum (`.route`, chained method routers, `.nest`, `.layer`/`.route_layer`, extractor-type guards), actix-web (`#[get]` macros, `web::scope`, `.wrap`), rocket (`#[get]` macros, `.mount` + `routes![]`, request guards) |
 
 TypeScript annotations are stripped before parsing, length-preserving, so line
 numbers stay correct.
+
+Rust has no parser here, so extraction is token-structural: a brace-aware scanner
+reads the routing call, and the handler is resolved by name in the same file.
+That covers what rustfmt actually emits — routes wrapped across lines,
+`post(create).get(list)` chains counted as two exposures, `axum::routing::patch`,
+and `r#"/v1/templates/{name}"#` without the braces in the path derailing the
+scan. Two things it does not resolve, both failing toward *reporting* a route
+rather than assuming it covered: a router composed across files keeps its own
+path but loses the prefix applied elsewhere, and a `MethodRouter` assigned to a
+variable first resolves no handler.
 
 ### CI
 
@@ -150,8 +161,9 @@ is asserted in CI. Low-severity findings are excluded from the paid stage.
 - **It will miss unusual architectures.** Auth enforced in a gateway, a service
   mesh, a decorator factory, or generated code will read as missing. Mark those
   routes public or exclude the path.
-- **It does not read Rust.** Express, Fastify and Koa (JS/TS) plus FastAPI and
-  Flask (Python). An axum or actix service is invisible to it today.
+- **It reads five languages' worth of routers, and no more.** JS/TS, Python and
+  Rust are listed above. Go, Ruby, Java, PHP and C# are invisible to it — and a
+  scan of an invisible codebase says so loudly rather than passing.
 - **It will produce false positives.** That is the trade for zero tokens and no
   network. Read the evidence line.
 - **A file it cannot parse is reported, never assumed clean.** Unparseable files
@@ -166,7 +178,7 @@ is asserted in CI. Low-severity findings are excluded from the paid stage.
 ## Development
 
 ```sh
-pnpm install && pnpm build && pnpm test   # 51 tests
+pnpm install && pnpm build && pnpm test   # 81 tests
 node dist/cli.js scan test/fixtures --verbose
 ```
 

@@ -55,6 +55,14 @@ const SENSITIVE = [
   { re: /\b(roles?|permissions?|acls?|grants?|scopes?)\b/i, why: "changes authorization state", weight: 3 },
   { re: /\b(exports?|downloads?|reports?|dumps?|backups?)\b/i, why: "bulk data egress", weight: 2 },
   { re: /\b(uploads?|imports?)\b/i, why: "accepts external content", weight: 1 },
+  // These two came out of scanning a control plane rather than a CRUD app, which
+  // is where the table was originally written. `POST /workspaces/{id}/command`
+  // with no auth is remote code execution; ranking it level with
+  // `POST /projects` is the "teaches you to ignore both" failure this module's
+  // docstring warns about. `run`/`runs` is deliberately absent — a path segment
+  // that reads as a noun ("list the runs") is data, not execution.
+  { re: /\b(commands?|exec|shell|terminal|pty|ssh|eval|scripts?)\b/i, why: "executes code or shell commands", weight: 3 },
+  { re: /\b(files?|dirs?|director(y|ies)|trees?|blobs?|attachments?)\b/i, why: "reads or writes files by path", weight: 2 },
   { re: /[:{<]\w+[}>]?|\*/, why: "takes an id or wildcard, so it can address another tenant's row", weight: 1 },
 ];
 
@@ -97,8 +105,11 @@ function questionFor(route: Route, severity: Severity): string {
 const SKIP_DIR = new Set([
   "node_modules", ".git", "dist", "build", "coverage", ".next", ".venv", "venv",
   "__pycache__", ".mypy_cache", ".pytest_cache", "vendor", "site-packages",
+  // Rust build output. `target/` holds a copy of every dependency's source, so
+  // scanning it turns a 40-file crate into 40,000 files of other people's code.
+  "target",
 ]);
-const EXT = new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".py"]);
+const EXT = new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".py", ".rs"]);
 
 export function collect(target: string): string[] {
   const st = statSync(target);
@@ -134,7 +145,13 @@ export function scan(targets: string[]): ScanResult {
       continue;
     }
     // Cheap gate: a file with no routing verbs cannot contain a route.
-    if (!/\.(get|post|put|patch|delete|route|api_route|use)\s*\(|@\w+\.(get|post|route)/.test(source)) {
+    // Cheap gate, second half: Rust's attribute-macro routers (`#[get("/x")]`)
+    // contain no `.method(` call at all, so the JS/Python gate would skip the
+    // file and report a clean scan of nothing.
+    if (
+      !/\.(get|post|put|patch|delete|route|api_route|use)\s*\(|@\w+\.(get|post|route)/.test(source) &&
+      !/#\[\s*(?:\w+\s*::\s*)?(get|post|put|patch|delete|head|options|route)\s*\(/.test(source)
+    ) {
       continue;
     }
     try {

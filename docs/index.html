@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>authsweep — route handlers with no authorization check</title>
-<meta name="description" content="Deterministic auth audit for Express, Fastify, FastAPI and Flask. Zero tokens, evidence on every finding, and an opt-in diverse-lens verify stage.">
+<meta name="description" content="Deterministic auth audit for Express, Fastify, Koa, FastAPI, Flask, axum, actix-web and rocket. Zero tokens, evidence on every finding, and an opt-in diverse-lens verify stage.">
 <meta property="og:title" content="authsweep — route handlers with no authorization check">
-<meta property="og:description" content="Deterministic auth audit for Express, Fastify, FastAPI and Flask. Zero tokens, evidence on every finding, and an opt-in diverse-lens verify stage.">
+<meta property="og:description" content="Deterministic auth audit for Express, Fastify, Koa, FastAPI, Flask, axum, actix-web and rocket. Zero tokens, evidence on every finding, and an opt-in diverse-lens verify stage.">
 <meta property="og:type" content="website">
 <link rel="icon" href="assets/favicon.svg">
 <link rel="stylesheet" href="assets/tokens.css">
@@ -24,6 +24,7 @@
     </a>
     <nav>
       <a href="#prefilter">Prefilter</a>
+      <a href="#supported">Supported</a>
       <a href="#severity">Severity</a>
       <a href="#verify">Verify</a>
       <a href="https://github.com/Unchained-Labs/authsweep">GitHub</a>
@@ -40,8 +41,9 @@
     <p class="lead">Enumerating routes and asking whether each one references the auth middleware is grep with a parser attached — deterministic, instant, free. On a real codebase it removes more than half the work before any agent runs.</p>
     <ul class="badges">
       <li class="badge warn">alpha</li>
-      <li class="badge up">51 tests passing</li>
+      <li class="badge up">81 tests passing</li>
       <li class="badge up">zero tokens</li>
+      <li class="badge accent">JS/TS · Python · Rust</li>
       <li class="badge ">SARIF</li>
       <li class="badge ">MIT</li>
     </ul>
@@ -51,7 +53,7 @@
     </div>
     <figure class="demo hero-demo">
       <video src="assets/demo.mp4" poster="assets/demo-poster.jpg" autoplay loop muted playsinline preload="auto" aria-label="authsweep terminal demo"></video>
-      <figcaption>Real output. 16 of 25 routes prefiltered before any agent ran.</figcaption>
+      <figcaption>Real output. 18 of 28 routes prefiltered before any agent ran.</figcaption>
     </figure>
   </div>
 </section>
@@ -62,9 +64,9 @@
     <h2>Deterministic, and it shows its work</h2>
     <pre class="term"><code><span class="p">$</span> <span class="c">authsweep scan .</span>
 
-  <span class="dim">authsweep</span>  4 files · 25 routes · express, flask, fastapi
+  <span class="dim">authsweep</span>  5 files · 28 routes · express, fastapi, flask
 
-  <span class="dim">prefilter</span>  16 of 25 routes dropped before any agent ran
+  <span class="dim">prefilter</span>  18 of 28 routes dropped before any agent ran
              <span class="dim">64% of the fan-out, for zero tokens</span>
 
   <span class="er">✗</span> DELETE /admin/users/:id/roles  <span class="dim">src/routes/admin.js:18</span>
@@ -96,6 +98,41 @@
     </div>
     <h3>A path is not a guard</h3>
     <p class="narrow">An early version read <code>app.post(&#x27;/auth/login&#x27;, handler)</code> as guarded, because the word <em>auth</em> in the <strong>path</strong> matched the guard pattern. Every <code>/auth/*</code> route in a codebase would have been silently treated as protected. Path literals are now stripped before guard detection, and there is a test for it.</p>
+  </div>
+</section>
+
+<section id="supported">
+  <div class="wrap">
+    <p class="label">Supported</p>
+    <h2>Three languages, eight routers</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>Language</th>
+          <th>Frameworks, and what is resolved</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><code>JS / TS</code></td>
+            <td>Express, Fastify (call and object form), Koa. Parsed with a real JS parser, because <code>app.get(&#x27;/x&#x27;, mw, handler)</code> needs argument positions. TypeScript annotations are stripped length-preservingly, so line numbers stay correct.</td>
+          </tr>
+          <tr>
+            <td><code>Python</code></td>
+            <td>FastAPI, including <code>Depends</code> and router-level dependencies, and Flask, including <code>methods=</code>.</td>
+          </tr>
+          <tr>
+            <td><code>Rust</code></td>
+            <td>axum — <code>.route</code>, chained method routers, <code>.nest</code>, <code>.layer</code>/<code>.route_layer</code>, extractor-type guards. actix-web — <code>#[get]</code> attribute macros, <code>web::scope</code> prefixes, <code>.wrap</code> guards. rocket — attribute macros, <code>.mount</code> + <code>routes![]</code> prefixes, request guards.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Rust without a Rust parser</h3>
+    <p class="narrow">There is no Rust parser here, so extraction is token-structural: a brace-aware scanner reads the routing call, and the handler is resolved by name in the same file. That covers what rustfmt actually emits — a route wrapped across four lines, <code>post(create).get(list)</code> counted as <em>two</em> exposures rather than one, <code>axum::routing::patch</code>, and a raw-string path whose braces would derail a scanner that does not know about string literals.</p>
+    <p class="narrow">It was written against a real service rather than invented fixtures, and that mattered twice. <code>web::scope(&quot;/admin&quot;).wrap(auth)</code> chains <em>after</em> its own arguments, so attributing the guard to the enclosing function marks every sibling route covered — a false clean. And resolving <code>.mount(&quot;/api/v1&quot;, …)</code> turned <code>/ping</code> into <code>/api/v1/ping</code>, which the head-anchored public-path list stopped recognising: the tool started reporting health checks precisely because it had got better at reading the router.</p>
+    <div class="note">
+      <p><strong>Two things it does not resolve, and both fail toward reporting.</strong> A router composed across files keeps its own path but loses the prefix applied elsewhere, and a <code>MethodRouter</code> assigned to a variable first resolves no handler. In each case the route is <em>reported</em> rather than assumed covered — for this tool that is the only acceptable direction to be wrong in.</p>
+    </div>
   </div>
 </section>
 
@@ -175,6 +212,7 @@
       <p><strong>It is not a taint analyser.</strong> It answers <em>is there an auth check here</em>, not <em>is the check correct</em>. A route with <code>requireAuth</code> that then reads <code>req.params.id</code> with no ownership check is invisible to it — that is what the verify lenses are for.</p>
       <p><strong>It will miss unusual architectures.</strong> Auth enforced in a gateway, a service mesh, a decorator factory or generated code reads as missing. Mark those routes public.</p>
       <p><strong>A file it cannot parse is reported, never assumed clean.</strong> Unparseable files are listed in the output and the JSON summary — a file we cannot read is not a file without findings.</p>
+      <p><strong>It reads three languages&#x27; worth of routers, and no more.</strong> Go, Ruby, Java, PHP and C# are invisible to it. A scan that found no routes says so loudly and sets <code>summary.examinedNothing</code>, because a scan that examined nothing must never read as a scan that found nothing.</p>
       <p><strong>It does not scan other people&#x27;s repositories for you.</strong> If you want to do that, the responsible-disclosure decisions are yours to make.</p>
     </div>
   </div>

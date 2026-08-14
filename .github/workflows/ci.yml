@@ -40,7 +40,11 @@ jobs:
           # `scan` exits 1 because the fixtures contain real high-severity gaps —
           # that is what they are for. Under `bash -e` the exit code would kill
           # the step before a single assertion ran.
-          node dist/cli.js scan test/fixtures --format json > s.json || true
+          # Scoped to the JS/TS and Python corpus, which is what this ratio is a
+          # claim about. The Rust fixtures next to it are adversarial by design —
+          # three of the four exist to prove a false clean *cannot* happen — so
+          # folding them in would measure the fixtures, not the prefilter.
+          node dist/cli.js scan test/fixtures/express test/fixtures/fastapi --format json > s.json || true
           node --input-type=module -e "
             import { readFileSync } from 'node:fs';
             const s = JSON.parse(readFileSync('s.json','utf8')).summary;
@@ -74,9 +78,49 @@ jobs:
       # Self-consistency across the family: the graph authsweep emits must pass
       # the linter its sibling ships. A tool that emits a spec its own org's
       # linter rejects is not a family, it is three unrelated repos.
+      # The Rust front-end exists because authsweep once printed a green tick over
+      # an axum control plane it could not read. These assertions are the fence
+      # around that: the routers must still be read, the prefixes still resolved,
+      # and the guarded routes still silent.
+      - name: rust routers are still read, prefixes and all
+        run: |
+          node dist/cli.js scan test/fixtures/rust --format json > r.json || true
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            const r = JSON.parse(readFileSync('r.json','utf8'));
+            if (r.summary.examinedNothing) throw new Error('examined nothing on a rust codebase');
+            const want = ['axum','actix','rocket'];
+            for (const f of want) if (!r.summary.frameworks.includes(f)) throw new Error('no longer detects ' + f);
+            const ids = r.findings.map(f => f.method + ' ' + f.path);
+            // Each of these needs a different part of the extractor to work:
+            // rustfmt line wrapping, an actix scope prefix, a rocket mount prefix,
+            // and a PascalCase type that only *starts* like auth.
+            for (const g of ['POST /v1/workspaces/{id}/command','GET /v1/secrets/{id}','GET /api/v1/jobs/<id>','POST /v1/authors/{id}/payouts']) {
+              if (!ids.includes(g)) throw new Error('rust regression — no longer finds ' + g);
+            }
+            const exec = r.findings.find(f => f.path === '/v1/workspaces/{id}/command');
+            if (exec.severity !== 'high') throw new Error('unauthenticated command execution is not ranked high');
+            console.log('ok  rust:', r.summary.routes, 'routes across', r.summary.frameworks.join(', '));
+          "
+
+      - name: rust guards are honoured, so the tool stays quiet where it should
+        run: |
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            const r = JSON.parse(readFileSync('r.json','utf8'));
+            const ids = r.findings.map(f => f.method + ' ' + f.path);
+            // route_layer on a nested axum router, an actix scope .wrap(), a rocket
+            // request guard, an axum extractor guard, a todo!() stub, and a health
+            // check under a mount prefix.
+            for (const quiet of ['DELETE /admin/users/{id}','DELETE /admin/keys/{id}','DELETE /internal/tenants/<id>','GET /v1/billing/invoices','GET /v1/legacy','GET /api/v1/ping']) {
+              if (ids.includes(quiet)) throw new Error('false positive on a guarded rust route: ' + quiet);
+            }
+            console.log('ok  rust: no false positives on guarded, stubbed or public routes');
+          "
+
       - name: the emitted verify spec lints clean under graphlint
         run: |
-          node dist/cli.js verify-spec test/fixtures > verify.graph.json
+          node dist/cli.js verify-spec test/fixtures/express test/fixtures/fastapi > verify.graph.json
           npm i -g graphlint 2>/dev/null || echo "graphlint not yet published — checking structure locally"
           node --input-type=module -e "
             import { readFileSync } from 'node:fs';

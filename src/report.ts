@@ -33,9 +33,10 @@ export function terminal(r: ScanResult, opts: { verbose?: boolean } = {}): strin
   if (!r.routes.length) {
     out.push(`  ${yellow("!")} ${bold("no routes found — nothing was examined")}`);
     out.push("");
-    out.push(`     ${dim("This is not a pass. authsweep reads Express, Fastify and Koa (JS/TS)")}`);
-    out.push(`     ${dim("and FastAPI and Flask (Python). A Rust, Go, Ruby or Java service is")}`);
-    out.push(`     ${dim("invisible to it, and so is a router it cannot recognise.")}`);
+    out.push(`     ${dim("This is not a pass. authsweep reads Express, Fastify and Koa (JS/TS),")}`);
+    out.push(`     ${dim("FastAPI and Flask (Python), and axum, actix-web and rocket (Rust). A")}`);
+    out.push(`     ${dim("Go, Ruby, Java or C# service is invisible to it, and so is a router it")}`);
+    out.push(`     ${dim("cannot recognise.")}`);
     out.push("");
     out.push(`     ${dim("Check the path, or treat this stack as unscanned.")}`);
     if (r.unparseable.length) {
