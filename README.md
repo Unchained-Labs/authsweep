@@ -6,6 +6,11 @@
   <p><a href="https://unchained-labs.github.io/authsweep/">Docs</a> · <a href="#the-prefilter">The prefilter</a> · <a href="#severity">Severity</a></p>
 </div>
 
+<div align="center">
+  <img src="docs/assets/demo.gif" width="760" alt="authsweep terminal demo">
+  <br><sub>16 of 25 routes prefiltered before any agent ran. <a href="https://unchained-labs.github.io/authsweep/">Full docs →</a></sub>
+</div>
+
 ---
 
 **Status: alpha.** The scan is deterministic and tested; the heuristics will
