@@ -26,8 +26,29 @@ export function terminal(r: ScanResult, opts: { verbose?: boolean } = {}): strin
   }
   out.push("");
 
+  // Zero routes is NOT a clean bill of health — it usually means the framework
+  // is unsupported (Rust/axum, Go, Rails) and nothing was examined at all. A
+  // green tick here is a false clean by omission, which is the same defect as
+  // mis-reading a guard: silence reads as safety.
+  if (!r.routes.length) {
+    out.push(`  ${yellow("!")} ${bold("no routes found — nothing was examined")}`);
+    out.push("");
+    out.push(`     ${dim("This is not a pass. authsweep reads Express, Fastify and Koa (JS/TS)")}`);
+    out.push(`     ${dim("and FastAPI and Flask (Python). A Rust, Go, Ruby or Java service is")}`);
+    out.push(`     ${dim("invisible to it, and so is a router it cannot recognise.")}`);
+    out.push("");
+    out.push(`     ${dim("Check the path, or treat this stack as unscanned.")}`);
+    if (r.unparseable.length) {
+      out.push("");
+      out.push(`     ${yellow(`${r.unparseable.length} file(s) failed to parse:`)}`);
+      for (const u of r.unparseable.slice(0, 5)) out.push(`       ${grey(u)}`);
+    }
+    out.push("");
+    return out.join("\n");
+  }
+
   if (!r.findings.length) {
-    out.push(`  ${green("✓")} every route has an authorization check, is marked public, or is conventionally public`);
+    out.push(`  ${green("✓")} all ${r.routes.length} routes have an authorization check, are marked public, or are conventionally public`);
     out.push("");
     return out.join("\n");
   }
@@ -60,6 +81,8 @@ export function json(r: ScanResult): string {
   return `${JSON.stringify(
     {
       summary: {
+        // Not a pass — nothing was examined. See the note on ScanResult.
+        examinedNothing: r.examinedNothing,
         files: r.files,
         routes: r.routes.length,
         prefiltered: r.prefiltered.length,

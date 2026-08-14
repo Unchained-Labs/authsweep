@@ -2,7 +2,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { json, sarif, workflowSpec } from "../src/report.js";
+import { json, sarif, terminal, workflowSpec } from "../src/report.js";
 import { extractJs, extractPy, hasGuard, isConventionallyPublic, markedPublic } from "../src/routes.js";
 import { scan, score } from "../src/scan.js";
 
@@ -289,6 +289,38 @@ describe("score", () => {
     expect(med.severity).toBe("medium");
     expect(high.severity).toBe("high");
     expect(high.reasons.length).toBeGreaterThan(low.reasons.length);
+  });
+});
+
+describe("zero routes is not a pass", () => {
+  // authsweep on Otter (Rust/axum) printed a green tick and exited 0 having read
+  // nothing. A CI job would go green on an unscanned service.
+  const empty = scan([join(FIXTURES, "..", "..", "src")]); // TS source, no routes
+
+  it("sets examinedNothing when no routes were found", () => {
+    expect(empty.routes).toHaveLength(0);
+    expect(empty.examinedNothing).toBe(true);
+  });
+
+  it("does not claim a pass in the terminal output", () => {
+    const out = terminal(empty);
+    expect(out).toMatch(/nothing was examined/);
+    expect(out).toMatch(/This is not a pass/);
+    expect(out).not.toMatch(/✓/);
+  });
+
+  it("surfaces the flag in JSON so machines cannot misread it either", () => {
+    expect(JSON.parse(json(empty)).summary.examinedNothing).toBe(true);
+  });
+
+  it("still reports a genuine pass when routes exist and are all guarded", () => {
+    const guarded = scan([join(FIXTURES, "express", "guarded-router.js")]);
+    expect(guarded.examinedNothing).toBe(false);
+    expect(guarded.routes.length).toBeGreaterThan(0);
+    expect(guarded.findings).toHaveLength(0);
+    const out = terminal(guarded);
+    expect(out).toMatch(/✓/);
+    expect(out).not.toMatch(/nothing was examined/);
   });
 });
 

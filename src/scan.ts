@@ -29,6 +29,9 @@ export interface Finding {
 }
 
 export interface ScanResult {
+  /** True when no routes were found at all — the scan examined nothing, which is
+   *  not the same as finding nothing wrong. Consumers must not read this as a pass. */
+  examinedNothing: boolean;
   routes: Route[];
   findings: Finding[];
   /** Routes dropped by the prefilter, and why. */
@@ -168,6 +171,7 @@ export function scan(targets: string[]): ScanResult {
   );
 
   return {
+    examinedNothing: routes.length === 0,
     routes,
     findings,
     prefiltered,

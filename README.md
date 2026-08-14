@@ -156,6 +156,10 @@ is asserted in CI. Low-severity findings are excluded from the paid stage.
   network. Read the evidence line.
 - **A file it cannot parse is reported, never assumed clean.** Unparseable files
   are listed in the output and the JSON summary.
+- **Zero routes is not a pass.** If it finds no routes at all — an unsupported
+  framework, or the wrong path — it says so loudly instead of printing a green
+  tick, and `summary.examinedNothing` carries the same signal to machines. A
+  scan that examined nothing must never read as a scan that found nothing.
 - **It does not run scans against other people's repositories.** If you want to
   do that, the responsible-disclosure decisions are yours to make.
 
